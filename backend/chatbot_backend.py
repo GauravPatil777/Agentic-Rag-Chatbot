@@ -117,7 +117,7 @@ class chatbotState(TypedDict):
     messages:Annotated[list[BaseMessage],add_messages]
     
 # tools
-search_tool=DuckDuckGoSearchRun()
+
 
 from langchain_core.tools import tool
 @tool
@@ -129,6 +129,7 @@ def web_search(query: str) -> str:
     Do not use it for basic general-knowledge questions.
     """
     try:
+        search_tool=DuckDuckGoSearchRun()
         result = search_tool.invoke(query)
 
         if not result:
