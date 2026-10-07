@@ -238,7 +238,7 @@ def chat_node(state: chatbotState) -> chatbotState:
 
     return {"messages": [response]}
     
-tool_node=ToolNode(tools=tools)
+tool_node=ToolNode(tools=tools, handle_tool_errors=True)
 
 # checkpointer
 conn=sqlite3.connect(database='chatbot_db',check_same_thread=False)
