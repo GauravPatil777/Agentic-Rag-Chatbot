@@ -3,7 +3,7 @@ from langgraph.graph import START,StateGraph
 from langsmith import traceable
 from langchain_community.tools import DuckDuckGoSearchRun
 from typing import TypedDict,Annotated
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage,SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain.tools import tool
 import sqlite3
@@ -49,11 +49,11 @@ def generate_context(uploaded_file):
      # Delete temporary PDF
     os.remove(temp_pdf_path)
    
-def retrieve_all_threads():
-    all_threads=set()
-    for checkpoint in checkpointer.list(None):
-        all_threads.add(checkpoint.config['configurable']['thread_id'])
-    return list(all_threads)
+# def retrieve_all_threads():
+#     all_threads=set()
+#     for checkpoint in checkpointer.list(None):
+#         all_threads.add(checkpoint.config['configurable']['thread_id'])
+#     return list(all_threads)
 def delete_thread(thread_id):
     conn = sqlite3.connect(
             "chatbot_db",
@@ -119,6 +119,30 @@ class chatbotState(TypedDict):
 # tools
 search_tool=DuckDuckGoSearchRun()
 
+from langchain_core.tools import tool
+@tool
+def web_search(query: str) -> str:
+    """
+    Search the web for current, recent, or time-sensitive information.
+    Use this tool for news, today's information, recent events, live updates,
+    current prices, current weather, and other information that may have changed.
+    Do not use it for basic general-knowledge questions.
+    """
+    try:
+        result = search_tool.invoke(query)
+
+        if not result:
+            return "No web search results were found."
+
+        return result
+
+    except Exception as e:
+        return (
+            "WEB_SEARCH_FAILED: The web search service is currently unavailable. "
+            "Do not call web_search again for this question. "
+            "Answer using your existing knowledge if possible."
+        )
+
 @tool
 def calculator(a: int, b: int,operation:str) -> int:
     """perform arithmetic operations on two numbers.
@@ -163,14 +187,55 @@ def rag_tool(query:str)->str:
     result=chain.invoke({"context":context,"question":query})
     return result
         
-tools=[search_tool,calculator,weather_data,rag_tool]
+tools=[web_search,calculator,weather_data,rag_tool]
 
 model_with_tools=model.bind_tools(tools)
+SYSTEM_PROMPT = """
+You are an intelligent Agentic RAG assistant.
+
+You have four tools:
+
+1. rag_tool
+   Use when the user asks about information contained in the uploaded PDF.
+
+2. web_search
+   Use ONLY for current, recent, live, or time-sensitive information,
+   such as:
+   - current news
+   - today's events
+   - recent developments
+   - current prices
+   - live information
+   - information that may have changed recently
+
+   Do NOT use web_search for normal general-knowledge questions,
+   basic facts, definitions, mathematics, programming concepts,
+   geography, history, or other information you already know.
+
+3. calculator
+   Use for arithmetic calculations.
+
+4. weather_data
+   Use when the user asks for current weather information.
+
+Important:
+- Do not call web_search unnecessarily.
+- If web_search returns WEB_SEARCH_FAILED, do not call it again.
+- Instead, answer using your existing knowledge when possible.
+- Give a direct and useful answer.
+"""
 
 @traceable()
-def chat_node(state:chatbotState)->chatbotState:
-    response=model_with_tools.invoke(state['messages'])
-    return {'messages':[response]}  
+def chat_node(state: chatbotState) -> chatbotState:
+
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        *state["messages"]
+    ]
+
+    response = model_with_tools.invoke(messages)
+
+    return {"messages": [response]}
     
 tool_node=ToolNode(tools=tools)
 

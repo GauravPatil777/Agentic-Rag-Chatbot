@@ -10,7 +10,6 @@ sys.path.append(str(root_dir))
 
 from backend.chatbot_backend import (
     workflow,
-    retrieve_all_threads,
     generate_context,
     delete_thread,
     save_thread_name,
@@ -21,14 +20,14 @@ import random
 
 
 st.sidebar.markdown("""
-<h1 style="font-size: 44px;">AI Chatbot</h1>
+<h1 style="font-size: 44px;">🤖 AI Chatbot</h1>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("""
 <h2 style="font-size: 24px;">Upload file</h2>
 """, unsafe_allow_html=True)
 uploaded_file=st.sidebar.file_uploader("Choose a file",type=["pdf"])
-new_chat=st.sidebar.button('new chat')
+new_chat=st.sidebar.button('New Chat')
 st.sidebar.header("My coversations")
 
 titles=["Hello what can i do for you?","Hi whats in your mind today","Hey how can assist you today?","Hey lets make a chat here","Ask whatever you want know"]
@@ -44,7 +43,7 @@ if uploaded_file:
  
 
 if "threads" not in st.session_state:
-    st.session_state.threads =retrieve_all_threads()
+    st.session_state.threads =[]
     
 
 if "thread_names" not in st.session_state:
@@ -56,8 +55,8 @@ def generate_thread():
 if new_chat:
     new_thread_id = str(uuid.uuid4())
     st.session_state.thread_id = new_thread_id
-    st.session_state.thread_names[new_thread_id] = "New Chat"
-    save_thread_name(new_thread_id, "New Chat")
+    st.session_state.thread_names[new_thread_id] = "New Conversation"
+    save_thread_name(new_thread_id, "New Conversation")
     st.session_state.threads.append(new_thread_id)
     st.session_state.messages = []
     st.rerun()
@@ -126,9 +125,9 @@ for message in st.session_state.messages:
 st.markdown("""
 <style>
 [data-testid="stChatInput"] textarea {
-    font-size: 24px;
-    min-height: 30px;
-    padding: 6px 9px;
+    font-size: 20px;
+    min-height: 25px;
+    padding: 3px 5px;
 }
 </style>
 """, unsafe_allow_html=True)
