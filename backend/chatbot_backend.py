@@ -7,7 +7,6 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from typing import TypedDict,Annotated
 from langchain_core.messages import BaseMessage,SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langchain.tools import tool
 import sqlite3
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
