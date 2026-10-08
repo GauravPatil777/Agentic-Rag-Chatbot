@@ -1,6 +1,7 @@
 import uuid
 
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START,StateGraph
 from langsmith import traceable
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -49,7 +50,11 @@ def generate_context(uploaded_file,thread_id):
         splitted_docs = text_splitter.split_documents(documents)
 
         # Generate embeddings
-        embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
+        # embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
+        
+        embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
 
         document_id = str(uuid.uuid4())
         # Create a vector store
