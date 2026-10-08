@@ -49,7 +49,7 @@ def generate_context(uploaded_file,thread_id):
         splitted_docs = text_splitter.split_documents(documents)
 
         # Generate embeddings
-        embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
+        embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
 
         document_id = str(uuid.uuid4())
         # Create a vector store
