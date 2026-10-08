@@ -1,6 +1,6 @@
 import uuid
 
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI,GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START,StateGraph
 from langsmith import traceable
@@ -263,7 +263,7 @@ Important:
 - Give a direct and useful answer.
 """
 
-@traceable()
+# @traceable()
 def chat_node(state: chatbotState) -> chatbotState:
 
     messages = [
