@@ -1,3 +1,5 @@
+import uuid
+
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langgraph.graph import START,StateGraph
 from langsmith import traceable
@@ -21,33 +23,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 model=ChatGoogleGenerativeAI(
-     model="gemini-3.1-flash-lite"
+     model="gemini-3.5-flash-lite"
 )
 
-vector_store = None
+vector_stores={}
+thread_documents = {}
 
-def generate_context(uploaded_file):
-    global vector_store
+current_thread_id = None
+
+
+def set_current_thread(thread_id):
+    global current_thread_id
+    current_thread_id = thread_id
+def generate_context(uploaded_file,thread_id):
+   
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         temp_file.write(uploaded_file.getvalue())
         temp_pdf_path = temp_file.name
+    try:
+        # Load PDF using the file path
+        loader = PyPDFLoader(temp_pdf_path)
+        documents = loader.load()
 
-    # Load PDF using the file path
-    loader = PyPDFLoader(temp_pdf_path)
-    documents = loader.load()
+        # Split the documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20)
+        splitted_docs = text_splitter.split_documents(documents)
 
-    # Split the documents into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20)
-    splitted_docs = text_splitter.split_documents(documents)
+        # Generate embeddings
+        embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
-    # Generate embeddings
-    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
-
-    # Create a vector store
-    vector_store = Chroma.from_documents(splitted_docs,
-                                         embedding=embeddings)
-     # Delete temporary PDF
-    os.remove(temp_pdf_path)
+        document_id = str(uuid.uuid4())
+        # Create a vector store
+        vector_store = Chroma.from_documents(splitted_docs,
+                                             embedding=embeddings,
+                                             collection_name=document_id)
+        vector_stores[document_id]=vector_store
+        # Map current thread to this PDF
+        thread_documents[thread_id] = document_id
+    finally:
+         # Delete temporary PDF
+            os.remove(temp_pdf_path)
    
 # def retrieve_all_threads():
 #     all_threads=set()
@@ -55,6 +70,12 @@ def generate_context(uploaded_file):
 #         all_threads.add(checkpoint.config['configurable']['thread_id'])
 #     return list(all_threads)
 def delete_thread(thread_id):
+     # Remove PDF mapping
+    document_id = thread_documents.pop(thread_id, None)
+
+    # Remove vector store
+    if document_id:
+        vector_stores.pop(document_id, None)
     conn = sqlite3.connect(
             "chatbot_db",
             check_same_thread=False
@@ -168,13 +189,23 @@ def weather_data(location:str)->str:
     return result.json()
 
 @tool 
-def rag_tool(query:str)->str:
-    """Search the currently uploaded PDF and answer questions using its content.
-    Use this tool whenever the user asks about information contained in the uploaded PDF.
+def rag_tool(query: str) -> str:
     """
-    global vector_store
+    Search the PDF associated with the current conversation.
+    """
+    global current_thread_id
+    if current_thread_id is None:
+        return "No conversation is currently selected."
+
+    document_id = thread_documents.get(current_thread_id)
+
+    if document_id is None:
+        return "No PDF is associated with this conversation."
+
+    vector_store = vector_stores.get(document_id)
+
     if vector_store is None:
-        return "No document has been uploaded."
+        return "The PDF vector store could not be found."
     # perform similarity search
     similar_vectors=vector_store.similarity_search(query,3)
     context = "\n\n".join(
@@ -197,7 +228,9 @@ You are an intelligent Agentic RAG assistant.
 You have four tools:
 
 1. rag_tool
-   Use when the user asks about information contained in the uploaded PDF.
+   Use this tool whenever the user asks about the uploaded PDF,
+   document, file, its contents, topics, sections, data, or information
+   that may be present in the uploaded document.
 
 2. web_search
    Use ONLY for current, recent, live, or time-sensitive information,

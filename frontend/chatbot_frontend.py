@@ -13,7 +13,8 @@ from backend.chatbot_backend import (
     generate_context,
     delete_thread,
     save_thread_name,
-    retrieve_thread_name
+    retrieve_thread_name,
+    set_current_thread
 )
 import uuid
 import random
@@ -32,15 +33,6 @@ st.sidebar.header("My coversations")
 
 titles=["Hello what can i do for you?","Hi whats in your mind today","Hey how can assist you today?","Hey lets make a chat here","Ask whatever you want know"]
 
-if uploaded_file:
-    if (
-        "uploaded_file_name" not in st.session_state
-        or st.session_state.uploaded_file_name != uploaded_file.name
-    ):
-       with st.spinner("Processing PDF content..."):
-            generate_context(uploaded_file)
-            st.session_state.uploaded_file_name = uploaded_file.name
- 
 
 if "threads" not in st.session_state:
     st.session_state.threads =[]
@@ -55,7 +47,9 @@ def generate_thread():
 if new_chat:
     new_thread_id = str(uuid.uuid4())
     st.session_state.thread_id = new_thread_id
+    set_current_thread(new_thread_id)
     st.session_state.thread_names[new_thread_id] = "New Conversation"
+
     save_thread_name(new_thread_id, "New Conversation")
     st.session_state.threads.append(new_thread_id)
     st.session_state.messages = []
@@ -67,16 +61,6 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_names[st.session_state.thread_id] = "New Chat"
     save_thread_name(st.session_state.thread_id, "New Chat")
 
-config = {
-    "configurable": {
-        "thread_id": st.session_state.thread_id
-    },
-    "metadata": {
-        "thread_id": st.session_state["thread_id"],
-    },
-     "run_name": "chatbot",
-}
-
 
 for thread_id in reversed(st.session_state.threads):
     
@@ -87,6 +71,7 @@ for thread_id in reversed(st.session_state.threads):
         thread_btn = st.button(st.session_state.thread_names.get(thread_id, "Unnamed Thread"), key=f"thread_{thread_id}")
         if thread_btn:
             st.session_state.thread_id = thread_id
+            set_current_thread(thread_id)
             st.session_state.messages = []
             st.rerun()
     with col2:
@@ -94,6 +79,42 @@ for thread_id in reversed(st.session_state.threads):
             delete_thread(thread_id)
             st.session_state.threads.remove(thread_id)
             st.rerun()
+
+if uploaded_file:
+    if (
+        "uploaded_file_name" not in st.session_state
+        or st.session_state.uploaded_file_name != uploaded_file.name
+    ):  
+       new_thread_id = str(uuid.uuid4())
+       with st.spinner("Processing PDF content..."):
+            generate_context(uploaded_file,new_thread_id)
+            set_current_thread(new_thread_id)
+            st.session_state.thread_id = new_thread_id
+            st.session_state.messages = []
+            st.session_state.uploaded_file_name = uploaded_file.name
+            st.session_state.threads.append(new_thread_id)
+            thread_name=st.session_state.uploaded_file_name[:30]
+            st.session_state.thread_names[
+                new_thread_id
+            ] = thread_name
+
+            save_thread_name(
+                new_thread_id,
+                thread_name
+            )
+
+       st.rerun()
+ 
+config = {
+    "configurable": {
+        "thread_id": st.session_state.thread_id
+    },
+    "metadata": {
+        "thread_id": st.session_state["thread_id"],
+    },
+     "run_name": "chatbot",
+}
+
 state = workflow.get_state(config)
 
 if state.values:
@@ -137,7 +158,8 @@ user_inp = st.chat_input("Type your message")
 if user_inp:
 
     current_thread = st.session_state.thread_id
-
+     # Set active thread for RAG
+    set_current_thread(current_thread)
     # Give new chat a title from first message
     st.session_state.thread_names[current_thread] = user_inp[:30]
     save_thread_name(current_thread, user_inp[:30])
