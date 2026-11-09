@@ -1,5 +1,9 @@
-import uuid
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
+
+import uuid
 from langchain_google_genai import ChatGoogleGenerativeAI,GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.graph import START,StateGraph
@@ -7,8 +11,6 @@ from langsmith import traceable
 from langchain_community.tools import DuckDuckGoSearchRun
 from typing import TypedDict,Annotated
 from langchain_core.messages import BaseMessage,SystemMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
-import sqlite3
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
@@ -18,10 +20,12 @@ import tempfile
 from langgraph.prebuilt import ToolNode,tools_condition
 from langgraph.graph.message import add_messages
 import requests
-import os
-from dotenv import load_dotenv
+from langgraph.store.memory import InMemoryStore  
+from psycopg import Connection
+from langgraph.checkpoint.postgres import PostgresSaver
+from backend.database import pool
+from backend.mcp_client import call_tavily_search
 
-load_dotenv()
 model=ChatGoogleGenerativeAI(
      model="gemini-3.5-flash-lite"
 )
@@ -31,6 +35,7 @@ thread_documents = {}
 
 current_thread_id = None
 
+store=InMemoryStore()
 
 def set_current_thread(thread_id):
     global current_thread_id
@@ -68,85 +73,76 @@ def generate_context(uploaded_file,thread_id):
          # Delete temporary PDF
             os.remove(temp_pdf_path)
    
-# def retrieve_all_threads():
-#     all_threads=set()
-#     for checkpoint in checkpointer.list(None):
-#         all_threads.add(checkpoint.config['configurable']['thread_id'])
-#     return list(all_threads)
+def retrieve_all_threads():
+    all_threads=set()
+    for checkpoint in checkpointer.list(None):
+        all_threads.add(checkpoint.config['configurable']['thread_id'])
+    return list(all_threads)
+
 def delete_thread(thread_id):
+    
+    # 1. Permanently delete LangGraph checkpoint history from PostgreSQL
+    checkpointer.delete_thread(thread_id)
+    
+    with pool.connection() as conn:
+            with conn.cursor() as cursor:
+                # Delete thread name
+                cursor.execute(
+                    "DELETE FROM thread_names WHERE thread_id = %s",
+                    (thread_id,)
+                )
+        
+        
      # Remove PDF mapping
     document_id = thread_documents.pop(thread_id, None)
 
     # Remove vector store
     if document_id:
         vector_stores.pop(document_id, None)
-    conn = sqlite3.connect(
-            "chatbot_db",
-            check_same_thread=False
-        )
+        
+          
+def initialize_thread_names_table():
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS thread_names (
+                    thread_id TEXT PRIMARY KEY,
+                    thread_name TEXT NOT NULL
+                )
+            """)
 
-    cursor = conn.cursor()
-    # Create table if it doesn't exist
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS thread_names (
-            thread_id TEXT PRIMARY KEY,
-            thread_name TEXT
-        )
-    """)
-    cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-     # Delete thread name
-    cursor.execute(
-        "DELETE FROM thread_names WHERE thread_id = ?",
-        (thread_id,)
-    )
-
-    conn.commit()
-    conn.close()
+initialize_thread_names_table()
 
 def save_thread_name(thread_id, thread_name):
-    conn = sqlite3.connect("chatbot_db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS thread_names (
-            thread_id TEXT PRIMARY KEY,
-            thread_name TEXT
-        )
-    """)
-
-    cursor.execute("""
-        INSERT OR REPLACE INTO thread_names
-        (thread_id, thread_name)
-        VALUES (?, ?)
-    """, (thread_id, thread_name))
-
-    conn.commit()
-    conn.close()
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                           INSERT INTO thread_names (thread_id, thread_name)
+                           VALUES (%s, %s)
+                           ON CONFLICT (thread_id)
+                DO UPDATE SET thread_name = EXCLUDED.thread_name
+            """, (thread_id, thread_name))
+ 
 
 def retrieve_thread_name():
-    conn=sqlite3.connect("chatbot_db")
-    cursor=conn.cursor()
-    # Create table if it doesn't exist
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS thread_names (
-            thread_id TEXT PRIMARY KEY,
-            thread_name TEXT
-        )
-    """)
-    cursor.execute("""SELECT thread_id,thread_name from thread_names """)
-    result=cursor.fetchall()
-    conn.close()
-    return dict(result)
-
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                           SELECT thread_id,thread_name
+                           from thread_names""")
+            result=cursor.fetchall()
+        return dict(result)
+    
 class chatbotState(TypedDict):
     messages:Annotated[list[BaseMessage],add_messages]
+
     
 # tools
-
-
 from langchain_core.tools import tool
+# @tool
 @tool
-def web_search(query: str) -> str:
+# @traceable()
+def web_search(query: str,max_results: int = 1) -> str:
     """
     Search the web for current, recent, or time-sensitive information.
     Use this tool for news, today's information, recent events, live updates,
@@ -154,13 +150,12 @@ def web_search(query: str) -> str:
     Do not use it for basic general-knowledge questions.
     """
     try:
-        search_tool=DuckDuckGoSearchRun()
-        result = search_tool.invoke(query)
-
-        if not result:
-            return "No web search results were found."
-
-        return result
+        # search_tool=DuckDuckGoSearchRun()
+        # result = search_tool.invoke(query)
+        return call_tavily_search(
+            query=query,
+            max_results=max_results,
+        )
 
     except Exception as e:
         return (
@@ -266,20 +261,28 @@ Important:
 # @traceable()
 def chat_node(state: chatbotState) -> chatbotState:
 
+  
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        *state["messages"]
-    ]
+            SystemMessage(content=SYSTEM_PROMPT),
+            *state["messages"]
+        ]
 
     response = model_with_tools.invoke(messages)
+    # print(response)
 
     return {"messages": [response]}
     
 tool_node=ToolNode(tools=tools, handle_tool_errors=True)
 
-# checkpointer
-conn=sqlite3.connect(database='chatbot_db',check_same_thread=False)
-checkpointer =SqliteSaver(conn=conn)
+# PostgreSQL checkpointer
+conn = Connection.connect(
+    os.environ["DATABASE_URL"],
+    autocommit=True,
+    prepare_threshold=0,
+)
+
+checkpointer = PostgresSaver(conn)
+checkpointer.setup()
 
 graph=StateGraph(chatbotState)
 graph.add_node('chat_node',chat_node)
@@ -288,5 +291,8 @@ graph.add_edge(START,'chat_node')
 graph.add_conditional_edges('chat_node',tools_condition)
 graph.add_edge('tools','chat_node')
 
+workflow = graph.compile(
+    checkpointer=checkpointer,
+    store=store,
+)
 
-workflow=graph.compile(checkpointer=checkpointer)

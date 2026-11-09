@@ -14,7 +14,8 @@ from backend.chatbot_backend import (
     delete_thread,
     save_thread_name,
     retrieve_thread_name,
-    set_current_thread
+    set_current_thread,
+    retrieve_all_threads,
 )
 import uuid
 import random
@@ -35,14 +36,11 @@ titles=["Hello what can i do for you?","Hi whats in your mind today","Hey how ca
 
 
 if "threads" not in st.session_state:
-    st.session_state.threads =[]
+    st.session_state.threads =retrieve_all_threads()
     
 
 if "thread_names" not in st.session_state:
     st.session_state.thread_names = retrieve_thread_name()
-
-def generate_thread():
-    return str(uuid.uuid4())
 
 if new_chat:
     new_thread_id = str(uuid.uuid4())
@@ -56,10 +54,10 @@ if new_chat:
     st.rerun()
    
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id =str(uuid.uuid4())
-    st.session_state.threads.append(st.session_state.thread_id)
-    st.session_state.thread_names[st.session_state.thread_id] = "New Chat"
-    save_thread_name(st.session_state.thread_id, "New Chat")
+        st.session_state.thread_id =str(uuid.uuid4())
+        st.session_state.threads.append(st.session_state.thread_id)
+        st.session_state.thread_names[st.session_state.thread_id] = "New Conversation"
+        save_thread_name(st.session_state.thread_id, "New Conversation")
 
 
 for thread_id in reversed(st.session_state.threads):
