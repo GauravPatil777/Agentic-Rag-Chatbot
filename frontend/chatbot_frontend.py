@@ -16,6 +16,9 @@ from backend.chatbot_backend import (
     retrieve_thread_name,
     set_current_thread,
     retrieve_all_threads,
+    save_evaluation_interaction,
+    get_retrieval_context,
+    clear_retrieval_context
 )
 import uuid
 import random
@@ -170,7 +173,7 @@ if user_inp:
      with st.spinner("Thinking..."):
 
         st.markdown(user_inp)
-        
+        clear_retrieval_context(current_thread)
         response=workflow.invoke(     {
                 "messages": [
                     HumanMessage(content=user_inp)
@@ -180,6 +183,14 @@ if user_inp:
         )
         
         ai_response = response['messages'][-1].text 
+        
+        retrieval_context = get_retrieval_context(current_thread)
+        
+        save_evaluation_interaction(
+         user_inp=user_inp,
+         ai_response=ai_response,
+         retrieval_context=retrieval_context
+)
 
 
     # Display AI message

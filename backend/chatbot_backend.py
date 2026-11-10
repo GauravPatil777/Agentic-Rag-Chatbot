@@ -37,6 +37,36 @@ current_thread_id = None
 
 store=InMemoryStore()
 
+import json
+retrieval_contexts = {}
+
+def save_evaluation_interaction(
+    user_inp,
+    ai_response,
+    retrieval_context
+):
+    with pool.connection() as conn:
+        with conn.cursor() as cursor:
+
+            cursor.execute("""
+                INSERT INTO evaluation_interactions
+                (user_input, ai_response, retrieval_context)
+                VALUES (%s, %s, %s)
+            """, (
+                user_inp,
+                ai_response,
+                json.dumps(retrieval_context)
+            ))
+
+        conn.commit()
+
+    print("Evaluation interaction saved successfully!")
+    
+def get_retrieval_context(thread_id):
+    return retrieval_contexts.get(thread_id, [])
+        
+def clear_retrieval_context(thread_id):
+    return retrieval_contexts.clear()
 def set_current_thread(thread_id):
     global current_thread_id
     current_thread_id = thread_id
@@ -206,16 +236,21 @@ def rag_tool(query: str) -> str:
     if vector_store is None:
         return "The PDF vector store could not be found."
     # perform similarity search
-    similar_vectors=vector_store.similarity_search(query,3)
-    context = "\n\n".join(
-    doc.page_content for doc in similar_vectors
-)
+
+    retrieved_docs = vector_store.similarity_search(query, k=3)
+
+    context = [doc.page_content for doc in retrieved_docs]
+
+    retrieval_contexts[current_thread_id] = context
+
+    # print(context)
     prompt=PromptTemplate(
         input_variables=["context","question"],
         template="Answer the question based on the context below.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
     )
     chain=prompt | model |StrOutputParser()
     result=chain.invoke({"context":context,"question":query})
+    # print("result",result)
     return result
         
 tools=[web_search,calculator,weather_data,rag_tool]
