@@ -6,11 +6,11 @@ load_dotenv()
 import uuid
 from langchain_google_genai import ChatGoogleGenerativeAI,GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
-from langgraph.graph import START,StateGraph
+from langgraph.graph import START,StateGraph,END
 from langsmith import traceable
 from langchain_community.tools import DuckDuckGoSearchRun
 from typing import TypedDict,Annotated
-from langchain_core.messages import BaseMessage,SystemMessage
+from langchain_core.messages import BaseMessage,SystemMessage,AIMessage
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
@@ -70,6 +70,7 @@ def clear_retrieval_context(thread_id):
 def set_current_thread(thread_id):
     global current_thread_id
     current_thread_id = thread_id
+    
 def generate_context(uploaded_file,thread_id):
    
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
@@ -165,6 +166,7 @@ def retrieve_thread_name():
     
 class chatbotState(TypedDict):
     messages:Annotated[list[BaseMessage],add_messages]
+    guardrail_status: str
 
     
 # tools
@@ -252,8 +254,56 @@ def rag_tool(query: str) -> str:
     result=chain.invoke({"context":context,"question":query})
     # print("result",result)
     return result
-        
+   
+def input_guardrail(state):
+
+    user_input = state["messages"][-1].content
+    unsafe_data=["ignore all previous instructions","hack","exploit"]
+
+    if any(word in user_input for word in unsafe_data) :
+
+        return {
+            "guardrail_status": "blocked",
+            "messages": [
+                AIMessage(
+                    content="Your request was blocked by security guardrails."
+                )
+            ]
+        }
+
+    return {
+        "guardrail_status": "passed"
+    }
+    
+def route_guardrail(state):
+
+    if state["guardrail_status"] == "blocked":
+        return "end"
+
+    return "chat_node"  
+
+def output_guardrail(state):
+
+    ai_response = state["messages"][-1].content
+
+    if "ignore all previous instructions" in ai_response:
+
+        return {
+            "guardrail_status": "blocked",
+            "messages": [
+                AIMessage(
+                    content="Your request was blocked by security guardrails."
+                )
+            ]
+        }
+    # if(False):
+    #      "guardrail_status": "blocked"
+    return {
+        "guardrail_status": "passed"
+    }
+      
 tools=[web_search,calculator,weather_data,rag_tool]
+
 
 model_with_tools=model.bind_tools(tools)
 SYSTEM_PROMPT = """
@@ -301,9 +351,9 @@ def chat_node(state: chatbotState) -> chatbotState:
             SystemMessage(content=SYSTEM_PROMPT),
             *state["messages"]
         ]
-
+    
     response = model_with_tools.invoke(messages)
-    # print(response)
+   
 
     return {"messages": [response]}
     
@@ -321,10 +371,41 @@ checkpointer.setup()
 
 graph=StateGraph(chatbotState)
 graph.add_node('chat_node',chat_node)
+graph.add_node('input_guard',input_guardrail)
+graph.add_node('output_guard',output_guardrail)
 graph.add_node("tools",tool_node)
-graph.add_edge(START,'chat_node')
-graph.add_conditional_edges('chat_node',tools_condition)
+graph.add_edge(START, "input_guard")
+
+# graph.add_edge('chat_node','input_guard')
+
+graph.add_conditional_edges(
+    "input_guard",
+    route_guardrail,
+    {
+        "chat_node": "chat_node",
+        "end": END
+    }
+)
+graph.add_conditional_edges(
+    "chat_node",
+    tools_condition,
+    {
+        "tools": "tools",
+        END: "output_guard"
+    }
+)
+
 graph.add_edge('tools','chat_node')
+graph.add_edge('output_guard',END)
+# graph.add_conditional_edges(
+#     "output_guard",
+#     route_guardrail,
+#     {
+#         "chat_node": "chat_node",
+#         "end": END
+#     }
+# )
+
 
 workflow = graph.compile(
     checkpointer=checkpointer,
